@@ -135,7 +135,7 @@ public class OracleSourceConnectorUtils{
         }        
         logMinerSelectWhereStmt=logMinerSelectWhereStmt.substring(0,logMinerSelectWhereStmt.length()-4)+")";
 
-        if (!tableBlackList.equals("")){          
+        if (!tableBlackList.equals("")){
           logMinerSelectWhereStmt+=" and not (";
           tabWithSchemas = Arrays.asList(tableBlackList.split(","));          
           for (String tables:tabWithSchemas){            
@@ -144,6 +144,14 @@ public class OracleSourceConnectorUtils{
           }
           logMinerSelectWhereStmt=logMinerSelectWhereStmt.substring(0,logMinerSelectWhereStmt.length()-4)+")";
         }
+
+        if (null != config.getPdbName()) {
+            String pdbName = config.getPdbName().trim();
+            if (!pdbName.isEmpty()) {
+                logMinerSelectWhereStmt += " AND src_con_name = '" + pdbName + "'";
+            }
+        }
+
         logMinerSelectSql+=logMinerSelectWhereStmt;
         logMinerSelectSqlDeSupportCM+=logMinerSelectWhereStmt+"))";
     }
