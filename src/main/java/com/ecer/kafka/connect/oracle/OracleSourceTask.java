@@ -217,7 +217,7 @@ public class OracleSourceTask extends SourceTask {
         });
       }
     }catch(SQLException e){
-      throw new ConnectException("Error at database tier, Please check : "+e.toString());
+      throw new ConnectException("Error at database tier, Please check : "+e.toString(), e);
     }
   }    
 
