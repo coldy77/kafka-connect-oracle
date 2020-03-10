@@ -28,6 +28,7 @@ import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_TYPE
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.UQ_COLUMN_FIELD;
 
 import java.net.ConnectException;
+import java.security.SecureRandom;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -181,6 +182,7 @@ public class OracleSourceConnectorUtils{
       }
       while(mineTableColsResultSet.next()){
         String columnName = mineTableColsResultSet.getString(COLUMN_NAME_FIELD);
+
         Boolean nullable = mineTableColsResultSet.getString(NULLABLE_FIELD).equals("Y") ? true:false;
         String dataType = mineTableColsResultSet.getString(DATA_TYPE_FIELD);
         if (dataType.contains(TIMESTAMP_TYPE)) dataType=TIMESTAMP_TYPE;
@@ -241,6 +243,9 @@ public class OracleSourceConnectorUtils{
           default:                        
             columnSchema = nullable ? Schema.OPTIONAL_STRING_SCHEMA : Schema.STRING_SCHEMA;            
             break;
+        }
+        if (dataSchemaBuiler.field(columnName) != null)  {
+            columnName += String.valueOf(new SecureRandom().nextInt(99));
         }
         dataSchemaBuiler.field(columnName,columnSchema);
         com.ecer.kafka.connect.oracle.models.Column column = new com.ecer.kafka.connect.oracle.models.Column(owner, tableName, columnName, nullable, dataType, dataLength, dataScale, pkColumn, uqColumn,columnSchema);

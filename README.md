@@ -120,6 +120,7 @@ In a multitenant configuration, the privileged Oracle user must be a "common use
 |tasks.max|Integer|Maximum number of tasks to create.This connector uses a single task.|
 |topic|String|Name of the topic that the messages will be written to.If it is set a value all messages will be written into this declared topic , if it is not set,  for each database table a topic will be created dynamically.|
 |db.name|String|Service name  or sid of the database to connect.Mostly database service name is used.|
+|pdb.name|String|In a multitenant environment, this is the pdb to filter log entries for.|
 |db.hostname|String|Ip address or hostname of Oracle database server.|
 |db.port|Integer|Port number of Oracle database server.|
 |db.user|String |Name of database user which is used to connect to database to start and execute logminer. This           user must provide necessary privileges mentioned above.|
@@ -153,6 +154,26 @@ In a multitenant configuration, the privileged Oracle user must be a "common use
     parse.dml.data=true
     reset.offset=false
     multitenant=false
+
+## Example Config Multitenant
+
+    name=oracle-logminer-connector
+    connector.class=com.ecer.kafka.connect.oracle.OracleSourceConnector
+    db.name.alias=test
+    tasks.max=1
+    topic=cdctest
+    db.name=testcdb
+    pdb.name=mylocalpdb
+    db.hostname=10.1.X.X
+    db.port=1521
+    db.user=kminer
+    db.user.password=kminerpass
+    db.fetch.size=1
+    table.whitelist=TEST.*,TEST2.TABLE2
+    table.blacklist=TEST2.TABLE3
+    parse.dml.data=true
+    reset.offset=false
+    multitenant=true
 
 ## Building and Running
 
