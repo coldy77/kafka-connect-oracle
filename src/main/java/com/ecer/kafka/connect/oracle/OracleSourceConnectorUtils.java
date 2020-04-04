@@ -244,10 +244,9 @@ public class OracleSourceConnectorUtils{
             columnSchema = nullable ? Schema.OPTIONAL_STRING_SCHEMA : Schema.STRING_SCHEMA;            
             break;
         }
-        if (dataSchemaBuiler.field(columnName) != null)  {
-            columnName += String.valueOf(new SecureRandom().nextInt(99));
+        if (dataSchemaBuiler.field(columnName) == null) {
+            dataSchemaBuiler.field(columnName, columnSchema);
         }
-        dataSchemaBuiler.field(columnName,columnSchema);
         com.ecer.kafka.connect.oracle.models.Column column = new com.ecer.kafka.connect.oracle.models.Column(owner, tableName, columnName, nullable, dataType, dataLength, dataScale, pkColumn, uqColumn,columnSchema);
         String keyTabCols = owner+DOT+tableName+DOT+columnName;
         tabColsMap.put(keyTabCols, column); 
