@@ -1,23 +1,14 @@
 package com.ecer.kafka.connect.oracle;
 
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.BEFORE_DATA_ROW_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COMMITSCN_POSITION_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COMMIT_SCN_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.CSF_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.DATA_ROW_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.DOT;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.LOG_MINER_OFFSET_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.OPERATION_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.POSITION_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ROWID_POSITION_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ROW_ID_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SCN_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SEG_OWNER_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SQL_REDO_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TABLE_NAME_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TEMPORARY_TABLE;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_FIELD;
-import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ORA_DESUPPORT_CM_VERSION;
+import com.ecer.kafka.connect.oracle.models.Data;
+import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
+import net.sf.jsqlparser.JSQLParserException;
+import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.kafka.connect.source.SourceTask;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.CallableStatement;
 import java.sql.Connection;
@@ -31,22 +22,30 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import com.ecer.kafka.connect.oracle.models.Data;
-import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
-
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.errors.ConnectException;
-import org.apache.kafka.connect.source.SourceRecord;
-import org.apache.kafka.connect.source.SourceTask;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import net.sf.jsqlparser.JSQLParserException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.BEFORE_DATA_ROW_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COMMITSCN_POSITION_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COMMIT_SCN_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.CSF_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.DATA_ROW_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.DOT;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.LOG_MINER_OFFSET_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.OPERATION_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ORA_DESUPPORT_CM_VERSION;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.POSITION_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ROWID_POSITION_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.ROW_ID_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SCN_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SEG_OWNER_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SESSION_INFO_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SQL_REDO_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TABLE_NAME_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TEMPORARY_TABLE;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_FIELD;
 
 /**
  *  
@@ -252,6 +251,10 @@ public class OracleSourceTask extends SourceTask {
           String segOwner = logMinerData.getString(SEG_OWNER_FIELD); 
           String segName = logMinerData.getString(TABLE_NAME_FIELD);
           String sqlRedo = logMinerData.getString(SQL_REDO_FIELD);
+          String sessionInfo = logMinerData.getString(SESSION_INFO_FIELD);
+          if (sessionInfo == null) {
+              sessionInfo = "";
+          }
           if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
 
           while(contSF){
@@ -262,11 +265,11 @@ public class OracleSourceTask extends SourceTask {
           sqlX=sqlRedo;        
           Timestamp timeStamp=logMinerData.getTimestamp(TIMESTAMP_FIELD);
           String operation = logMinerData.getString(OPERATION_FIELD);
-          Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation);
+          Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation, sessionInfo);
           topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
           //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
           if (ix % 100 == 0) log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp());
-          dataSchemaStruct = utils.createDataSchema(segOwner, segName, sqlRedo,operation);        
+          dataSchemaStruct = utils.createDataSchema(segOwner, segName, sqlRedo,operation, sessionInfo);
           records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId), topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));                          
           streamOffsetScn=scn;
           return records;
@@ -314,6 +317,7 @@ public class OracleSourceTask extends SourceTask {
               .put(SEG_OWNER_FIELD, row.getSegOwner())
               .put(TABLE_NAME_FIELD, row.getSegName())
               .put(TIMESTAMP_FIELD, row.getTimeStamp())
+              .put(SESSION_INFO_FIELD, row.getSessionInfo())
               .put(SQL_REDO_FIELD, row.getSqlRedo())
               .put(OPERATION_FIELD, row.getOperation())
               .put(DATA_ROW_FIELD, dataSchemaStruct.getDataStruct())

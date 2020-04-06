@@ -1,4 +1,37 @@
 package com.ecer.kafka.connect.oracle;
+
+import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.ExpressionVisitorAdapter;
+import net.sf.jsqlparser.expression.operators.relational.EqualsTo;
+import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.schema.Column;
+import net.sf.jsqlparser.statement.Statement;
+import net.sf.jsqlparser.statement.delete.Delete;
+import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.update.Update;
+import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.data.SchemaBuilder;
+import org.apache.kafka.connect.data.Struct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.net.ConnectException;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.BEFORE_DATA_ROW_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COLUMN_NAME_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.DATA_LENGTH_FIELD;
@@ -20,47 +53,13 @@ import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.OPTIONAL_TIMES
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.PK_COLUMN_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SCN_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SEG_OWNER_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SESSION_INFO_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SQL_REDO_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TABLE_NAME_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_SCHEMA;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_TYPE;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.UQ_COLUMN_FIELD;
-
-import java.net.ConnectException;
-import java.security.SecureRandom;
-import java.sql.CallableStatement;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
-
-import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.SchemaBuilder;
-import org.apache.kafka.connect.data.Struct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import net.sf.jsqlparser.JSQLParserException;
-import net.sf.jsqlparser.expression.Expression;
-import net.sf.jsqlparser.expression.ExpressionVisitorAdapter;
-import net.sf.jsqlparser.expression.operators.relational.EqualsTo;
-import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
-import net.sf.jsqlparser.parser.CCJSqlParserUtil;
-import net.sf.jsqlparser.schema.Column;
-import net.sf.jsqlparser.statement.Statement;
-import net.sf.jsqlparser.statement.delete.Delete;
-import net.sf.jsqlparser.statement.insert.Insert;
-import net.sf.jsqlparser.statement.update.Update;
 
 /**
  * contains common utils for connector
@@ -328,7 +327,7 @@ public class OracleSourceConnectorUtils{
     }
 
 
-    protected DataSchemaStruct createDataSchema(String owner,String tableName,String sqlRedo,String operation) throws Exception{
+    protected DataSchemaStruct createDataSchema(String owner,String tableName,String sqlRedo,String operation, String sessionInfo) throws Exception{
 
       Schema dataSchema=EMPTY_SCHEMA;
       Struct dataStruct = null;
@@ -388,6 +387,7 @@ public class OracleSourceConnectorUtils{
                   .field(TABLE_NAME_FIELD,Schema.STRING_SCHEMA)
                   .field(TIMESTAMP_FIELD,org.apache.kafka.connect.data.Timestamp.SCHEMA)
                   .field(SQL_REDO_FIELD, Schema.STRING_SCHEMA)
+                  .field(SESSION_INFO_FIELD, Schema.STRING_SCHEMA)
                   .field(OPERATION_FIELD, Schema.STRING_SCHEMA)
                   .field(DATA_ROW_FIELD, dataSchema)
                   .field(BEFORE_DATA_ROW_FIELD,dataSchema)

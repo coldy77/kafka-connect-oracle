@@ -13,15 +13,18 @@ public class Data{
     private String segOwner;
     private String segName;
     private String sqlRedo;
+
+    private String sessionInfo;
     private Timestamp timeStamp;
     private String operation;
 
-    public Data(Long scn,String segOwner,String segName,String sqlRedo,Timestamp timeStamp,String operation){
+    public Data(Long scn,String segOwner,String segName,String sqlRedo,Timestamp timeStamp,String operation, String sessionInfo){
         super();
         this.scn=scn;
         this.segOwner=segOwner;
         this.segName=segName;
         this.sqlRedo=sqlRedo;
+        this.sessionInfo=sessionInfo;
         this.timeStamp=timeStamp;
         this.operation=operation;
     }
@@ -72,5 +75,13 @@ public class Data{
 
     public void setOperation(String operation){
         this.operation=operation;
+    }
+
+    public String getSessionInfo() {
+        return sessionInfo;
+    }
+
+    public void setSessionInfo(String sessionInfo) {
+        this.sessionInfo = sessionInfo;
     }
 }

@@ -22,6 +22,7 @@ public class OracleConnectorSchema{
     public static final String TIMESTAMP_FIELD ="TIMESTAMP";
     public static final String COMMIT_TIMESTAMP_FIELD ="COMMIT_TIMESTAMP";
     public static final String SQL_REDO_FIELD ="SQL_REDO";
+    public static final String SESSION_INFO_FIELD ="SESSION_INFO";
     public static final String OPERATION_FIELD ="OPERATION";
     public static final String DATA_ROW_FIELD ="data";
     public static final String BEFORE_DATA_ROW_FIELD ="before";
