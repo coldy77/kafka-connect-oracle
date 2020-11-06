@@ -255,7 +255,11 @@ public class OracleSourceTask extends SourceTask {
           if (sessionInfo == null) {
               sessionInfo = "";
           }
+          streamOffsetScn=scn;
           if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
+          if (!utils.isTableLoggable(segName, null)) {
+            continue;
+          }
 
           while(contSF){
             logMinerData.next();
@@ -271,7 +275,6 @@ public class OracleSourceTask extends SourceTask {
           if (ix % 100 == 0) log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp());
           dataSchemaStruct = utils.createDataSchema(segOwner, segName, sqlRedo,operation, sessionInfo);
           records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId), topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));                          
-          streamOffsetScn=scn;
           return records;
         }
       }else{
@@ -282,6 +285,7 @@ public class OracleSourceTask extends SourceTask {
       log.info("Logminer stoppped successfully");       
     } catch (SQLException e){
       log.error("SQL error during poll",e );
+      reboot();
     }catch(JSQLParserException e){
       log.error("SQL parser error during poll ", e);
     }
@@ -310,6 +314,63 @@ public class OracleSourceTask extends SourceTask {
 
 
   }
+
+  public void reboot() {
+    log.info("Reboot called for logminer");
+    try {
+      log.info("Logminer session cancel");
+      logMinerSelect.cancel();
+      OracleSqlUtils.executeCallableStmt(dbConn, OracleConnectorSQL.STOP_LOGMINER_CMD);
+      if (dbConn!=null){
+        log.info("Closing database connection.Last SCN : {}",streamOffsetScn);
+        logMinerSelect.close();
+        logMinerStartStmt.close();
+        dbConn.close();
+        restart();
+      }
+    } catch (SQLException e) {log.error(e.getMessage());}
+  }
+
+  public void restart() {
+    log.info("Oracle Kafka Connector is RE-starting on {}",config.getDbNameAlias());
+    try {
+      dbConn = new OracleConnection().connect(config);
+      utils = new OracleSourceConnectorUtils(dbConn, config);
+      int dbVersion = utils.getDbVersion();
+      log.info("Connected to database version {}",dbVersion);
+      logMinerSelectSql = utils.getLogMinerSelectSql();
+
+      log.info("Starting LogMiner Session");
+      logMinerStartStmt=dbConn.prepareCall(logMinerStartScr);
+
+      if (streamOffsetScn==0L){
+        skipRecord=false;
+        currentSCNStmt=dbConn.prepareCall(OracleConnectorSQL.CURRENT_DB_SCN_SQL);
+        currentScnResultSet=currentSCNStmt.executeQuery();
+        while(currentScnResultSet.next()){
+          streamOffsetScn=currentScnResultSet.getLong("CURRENT_SCN");
+        }
+        currentScnResultSet.close();
+        currentSCNStmt.close();
+        log.info("Getting current scn from database {}",streamOffsetScn);
+      }
+      //streamOffsetScn+=1;
+      log.info("Commit SCN : "+streamOffsetCommitScn);
+      log.info(String.format("Log Miner will start at new position SCN : %s with fetch size : %s", streamOffsetScn,config.getDbFetchSize()));
+      logMinerStartStmt.setLong(1, streamOffsetScn);
+      logMinerStartStmt.execute();
+      logMinerSelect=dbConn.prepareCall(logMinerSelectSql);
+      logMinerSelect.setFetchSize(config.getDbFetchSize());
+      logMinerSelect.setLong(1, streamOffsetCommitScn);
+      logMinerData=logMinerSelect.executeQuery();
+      log.info("Logminer started successfully");
+    }catch(SQLException e){
+      throw new ConnectException("Error at database tier, Please check : "+e.toString(), e);
+    }
+  }
+
+
+
 
   private Struct setValueV2(Data row,DataSchemaStruct dataSchemaStruct) {    
     Struct valueStruct = new Struct(dataSchemaStruct.getDmlRowSchema())

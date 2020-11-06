@@ -1,6 +1,7 @@
 package com.ecer.kafka.connect.oracle;
 
 import com.ecer.kafka.connect.oracle.models.DataSchemaStruct;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.ExpressionVisitorAdapter;
@@ -18,6 +19,8 @@ import org.apache.kafka.connect.data.Struct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.IOException;
 import java.net.ConnectException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
@@ -68,6 +71,7 @@ import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.UQ_COLUMN_FIEL
  */
 
 public class OracleSourceConnectorUtils{
+
     static final Logger log = LoggerFactory.getLogger(OracleSourceConnectorUtils.class);
     private String logMinerSelectWhereStmt;
     private String tableWhiteList;
@@ -85,11 +89,52 @@ public class OracleSourceConnectorUtils{
     CallableStatement mineTableCols;
     ResultSet mineTableColsResultSet;
     ResultSet mineTablesResultSet;
+    Map<String, Map<String, Integer>> tableConfigJson = new HashMap<>();
 
     public OracleSourceConnectorUtils(Connection Conn,OracleSourceConnectorConfig Config)throws SQLException {    	
         this.dbConn=Conn;
         this.config=Config;
         parseTableWhiteList();
+        parseTableConfigJson();
+    }
+
+    private void parseTableConfigJson() {
+        String tableConfigJsonPath = config.getTableConfigJson();
+        if (tableConfigJsonPath == null || tableConfigJsonPath.isEmpty()) {
+            log.info("No Table Configuration configured");
+            return;
+        }
+        log.info("Parsing Table Configuration at {}", tableConfigJsonPath);
+        ObjectMapper mapper = new ObjectMapper();
+        File jsonFile = new File(tableConfigJsonPath);
+        try {
+            tableConfigJson = mapper.readValue(jsonFile, Map.class);
+            log.info("Parsing Table Configuration successful, found {} tables", tableConfigJson.keySet().size());
+        } catch (IOException e) {
+            log.error("Error reading table configuration file at: {}", tableConfigJson, e);
+        }
+    }
+
+    public boolean isTableLoggable(String tablename, String op) {
+        if (tableConfigJson.isEmpty()) {
+            return true;
+        }
+        Map<String, Integer> tableEntry = tableConfigJson.get(tablename.toUpperCase());
+        if (tableEntry == null) {
+            return false;
+        }
+
+        if (tableEntry.get("log").equals(0)) {
+            return false;
+        }
+
+        if (op != null) {
+            Integer opValue = tableEntry.get(op);
+            if (opValue != null && opValue.equals(0)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected String getLogMinerSelectSql(){
@@ -182,7 +227,9 @@ public class OracleSourceConnectorUtils{
       while(mineTableColsResultSet.next()){
         String columnName = mineTableColsResultSet.getString(COLUMN_NAME_FIELD);
 
-        Boolean nullable = mineTableColsResultSet.getString(NULLABLE_FIELD).equals("Y") ? true:false;
+        // Boolean nullable = mineTableColsResultSet.getString(NULLABLE_FIELD).equals("Y") ? true:false;
+        Boolean nullable=true; //remove due to minimal logging data in logmining session;
+
         String dataType = mineTableColsResultSet.getString(DATA_TYPE_FIELD);
         if (dataType.contains(TIMESTAMP_TYPE)) dataType=TIMESTAMP_TYPE;
         int dataLength = mineTableColsResultSet.getInt(DATA_LENGTH_FIELD);
@@ -327,7 +374,7 @@ public class OracleSourceConnectorUtils{
     }
 
 
-    protected DataSchemaStruct createDataSchema(String owner,String tableName,String sqlRedo,String operation, String sessionInfo) throws Exception{
+    public DataSchemaStruct createDataSchema(String owner,String tableName,String sqlRedo,String operation, String sessionInfo) throws Exception{
 
       Schema dataSchema=EMPTY_SCHEMA;
       Struct dataStruct = null;
