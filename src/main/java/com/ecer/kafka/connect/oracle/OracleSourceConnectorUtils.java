@@ -28,12 +28,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.BEFORE_DATA_ROW_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COLUMN_NAME_FIELD;
@@ -90,12 +92,23 @@ public class OracleSourceConnectorUtils{
     ResultSet mineTableColsResultSet;
     ResultSet mineTablesResultSet;
     Map<String, Map<String, Integer>> tableConfigJson = new HashMap<>();
+    List<String> allowedSchemas = new ArrayList<>();
+
+    boolean restart=false;
 
     public OracleSourceConnectorUtils(Connection Conn,OracleSourceConnectorConfig Config)throws SQLException {    	
         this.dbConn=Conn;
         this.config=Config;
-        parseTableWhiteList();
         parseTableConfigJson();
+        parseTableWhiteList();
+    }
+
+    public OracleSourceConnectorUtils(Connection Conn,OracleSourceConnectorConfig Config, boolean restart)throws SQLException {
+        this.dbConn=Conn;
+        this.config=Config;
+        this.restart = restart;
+        parseTableConfigJson();
+        parseTableWhiteList();
     }
 
     private void parseTableConfigJson() {
@@ -104,7 +117,9 @@ public class OracleSourceConnectorUtils{
             log.info("No Table Configuration configured");
             return;
         }
-        log.info("Parsing Table Configuration at {}", tableConfigJsonPath);
+        if (!restart) {
+            log.info("Parsing Table Configuration at {}", tableConfigJsonPath);
+        }
         ObjectMapper mapper = new ObjectMapper();
         File jsonFile = new File(tableConfigJsonPath);
         try {
@@ -115,10 +130,15 @@ public class OracleSourceConnectorUtils{
         }
     }
 
-    public boolean isTableLoggable(String tablename, String op) {
+    public boolean isTableLoggable(String tablename, String op, String schema) {
+        if (!allowedSchemas.contains(schema.trim().toUpperCase())) {
+            return false;
+        }
+
         if (tableConfigJson.isEmpty()) {
             return true;
         }
+
         Map<String, Integer> tableEntry = tableConfigJson.get(tablename.toUpperCase());
         if (tableEntry == null) {
             return false;
@@ -175,11 +195,26 @@ public class OracleSourceConnectorUtils{
         logMinerSelectWhereStmt="(";
         List<String> tabWithSchemas = Arrays.asList(tableWhiteList.split(","));
         for (String tables:tabWithSchemas){
+            List<String> tabs = Arrays.asList(tables.split("\\."));
+            allowedSchemas.add(tabs.get(0).trim().toUpperCase());
+        }
+        log.info("Allowed Schemas: {}", allowedSchemas);
+        for (String tables:tabWithSchemas){
           List<String> tabs = Arrays.asList(tables.split("\\."));
-          logMinerSelectWhereStmt+="("+SEG_OWNER_FIELD+"='"+tabs.get(0)+ "'" + (tabs.get(1).equals("*") ? "":" and "+TABLE_NAME_FIELD+"='"+tabs.get(1)+ "'")+") or ";
-        }        
-        logMinerSelectWhereStmt=logMinerSelectWhereStmt.substring(0,logMinerSelectWhereStmt.length()-4)+")";
+//          logMinerSelectWhereStmt+="("+SEG_OWNER_FIELD+"='"+tabs.get(0)+ "'" + (tabs.get(1).equals("*") ? "":" and "+TABLE_NAME_FIELD+"='"+tabs.get(1)+ "'")+") or ";
+          logMinerSelectWhereStmt+="("+SEG_OWNER_FIELD+"='"+tabs.get(0)+ "') ";
+        }
 
+        Set<String> configuredTableList = tableConfigJson.keySet();
+        if (!configuredTableList.isEmpty()) {
+            logMinerSelectWhereStmt+= "and (";
+        }
+        for (String table: configuredTableList) {
+            logMinerSelectWhereStmt+= TABLE_NAME_FIELD+"='"+table+ "' or ";
+        }
+        if (!configuredTableList.isEmpty()) {
+            logMinerSelectWhereStmt=logMinerSelectWhereStmt.substring(0,logMinerSelectWhereStmt.length()-4)+")";
+        }
         if (!tableBlackList.equals("")){
           logMinerSelectWhereStmt+=" and not (";
           tabWithSchemas = Arrays.asList(tableBlackList.split(","));          
@@ -197,7 +232,11 @@ public class OracleSourceConnectorUtils{
             }
         }
 
-        logMinerSelectSql+=logMinerSelectWhereStmt;
+        logMinerSelectSql+=logMinerSelectWhereStmt+")";
+        if (!restart) {
+            log.info("Generated Mining SQL: {}", logMinerSelectSql);
+        }
+
         logMinerSelectSqlDeSupportCM+=logMinerSelectWhereStmt+"))";
     }
 
