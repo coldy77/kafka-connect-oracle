@@ -28,14 +28,20 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.BEFORE_DATA_ROW_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.COLUMN_NAME_FIELD;
@@ -131,6 +137,9 @@ public class OracleSourceConnectorUtils{
     }
 
     public boolean isTableLoggable(String tablename, String op, String schema) {
+        if (schema == null || tablename == null) {
+            return false;
+        }
         if (!allowedSchemas.contains(schema.trim().toUpperCase())) {
             return false;
         }
@@ -232,7 +241,7 @@ public class OracleSourceConnectorUtils{
             }
         }
 
-        logMinerSelectSql+=logMinerSelectWhereStmt+")";
+        logMinerSelectSql+=logMinerSelectWhereStmt+"))";
         if (!restart) {
             log.info("Generated Mining SQL: {}", logMinerSelectSql);
         }
@@ -334,11 +343,15 @@ public class OracleSourceConnectorUtils{
         }
         com.ecer.kafka.connect.oracle.models.Column column = new com.ecer.kafka.connect.oracle.models.Column(owner, tableName, columnName, nullable, dataType, dataLength, dataScale, pkColumn, uqColumn,columnSchema);
         String keyTabCols = owner+DOT+tableName+DOT+columnName;
-        tabColsMap.put(keyTabCols, column); 
-        log.debug("tabColsMap entry added: {} = {}", keyTabCols, column.toString());
+        if (tabColsMap.get(keyTabCols) == null) {
+            tabColsMap.put(keyTabCols, column);
+            log.debug("tabColsMap entry added: {} = {}", keyTabCols, column.toString());
+        }
       }
       Schema tSchema = dataSchemaBuiler.optional().build();
-      tableSchema.put(owner+DOT+tableName, tSchema);
+      if (tableSchema.get(owner+DOT+tableName) == null) {
+        tableSchema.put(owner + DOT + tableName, tSchema);
+      }
       mineTableColsResultSet.close();
       mineTableCols.close();      
     }
@@ -484,7 +497,9 @@ public class OracleSourceConnectorUtils{
     }        
 
     private Object reSetValue(String value,Schema colSchema){
-      
+        DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        TimeZone timeZone = TimeZone.getTimeZone("Europe/Berlin");
+        df.setTimeZone(timeZone);
       Object o;
       switch(colSchema.toString()){
         case "Schema{INT8}":
@@ -504,7 +519,13 @@ public class OracleSourceConnectorUtils{
           break;
         case "Schema{org.apache.kafka.connect.data.Timestamp:INT64}":
           if (value.contains("+")) value = value.substring(0, value.indexOf("+"));
-          o = Timestamp.valueOf(value);
+          Date date = null;
+          try {
+            date = df.parse(value);
+            o = new Timestamp(date.getTime());
+          } catch (ParseException e) {
+            o = Timestamp.valueOf(value);
+          }
           break;
         case "Schema{STRING}":
         default:

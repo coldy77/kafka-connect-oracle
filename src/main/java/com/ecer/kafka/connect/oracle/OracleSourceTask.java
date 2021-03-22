@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -48,6 +49,7 @@ import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.SQL_REDO_FIELD
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TABLE_NAME_FIELD;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TEMPORARY_TABLE;
 import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.TIMESTAMP_FIELD;
+import static com.ecer.kafka.connect.oracle.OracleConnectorSchema.XID_FIELD;
 
 /**
  *  
@@ -243,7 +245,10 @@ public class OracleSourceTask extends SourceTask {
             if ((scn.equals(streamOffsetCtrl))&&(commitScn.equals(streamOffsetCommitScn))&&(rowId.equals(streamOffsetRowId))&&(!contSF)){
               skipRecord=false;
             }
-            log.info("Skipping data with scn :{} Commit Scn :{} Rowid :{}",scn,commitScn,rowId);
+            if (scn >= streamOffsetCtrl) {
+              skipRecord= false;
+            }
+//            log.info("Skipping data with scn :{} Commit Scn :{} Rowid :{}",scn,commitScn,rowId);
             continue;
           }
           //log.info("Data :"+scn+" Commit Scn :"+commitScn);
@@ -252,9 +257,11 @@ public class OracleSourceTask extends SourceTask {
       
           //String containerId = logMinerData.getString(SRC_CON_ID_FIELD);
           //log.info("logminer event from container {}", containerId);
-          String segOwner = logMinerData.getString(SEG_OWNER_FIELD); 
+          String segOwner = logMinerData.getString(SEG_OWNER_FIELD);
+          String operation = logMinerData.getString(OPERATION_FIELD);
           String segName = logMinerData.getString(TABLE_NAME_FIELD);
           String sqlRedo = logMinerData.getString(SQL_REDO_FIELD);
+          String xid = logMinerData.getString(XID_FIELD);
           String sessionInfo = logMinerData.getString(SESSION_INFO_FIELD);
           Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("Europe/Berlin"));
           Timestamp timeStamp=logMinerData.getTimestamp(TIMESTAMP_FIELD, cal);
@@ -262,9 +269,23 @@ public class OracleSourceTask extends SourceTask {
               sessionInfo = "";
           }
 
-          if (ix % 1000 == 0) log.info(String.format("Fetched %s (SCN:%s) rows from database %s ",ix,scn,config.getDbNameAlias())+" "+timeStamp);
 
           if (sqlRedo.contains(TEMPORARY_TABLE)) continue;
+
+          if (operation.toLowerCase().equals("commit") || operation.toLowerCase().equals("rollback")) {
+            if (operation.toLowerCase().equals("commit")) {
+              records.addAll(getTxElements(xid));
+              deleteTx(xid);
+            } else {
+              deleteTx(xid);
+            }
+            if (!records.isEmpty()) {
+              log.debug("records: {}", records);
+            }
+            return records;
+          }
+
+          if (ix % 1000 == 0) log.info(String.format("Fetched %s (SCN:%s) rows from database %s ",ix,scn,config.getDbNameAlias())+" "+timeStamp);
 
           if (!utils.isTableLoggable(segName, null, segOwner)) {
             continue;
@@ -276,12 +297,13 @@ public class OracleSourceTask extends SourceTask {
             contSF = logMinerData.getBoolean(CSF_FIELD);
           } 
           sqlX=sqlRedo;        
-          String operation = logMinerData.getString(OPERATION_FIELD);
           Data row = new Data(scn, segOwner, segName, sqlRedo,timeStamp,operation, sessionInfo);
           topic = config.getTopic().equals("") ? (config.getDbNameAlias()+DOT+row.getSegOwner()+DOT+row.getSegName()).toUpperCase() : topic;
           //log.info(String.format("Fetched %s rows from database %s ",ix,config.getDbNameAlias())+" "+row.getTimeStamp()+" "+row.getSegName()+" "+row.getScn()+" "+commitScn);
           dataSchemaStruct = utils.createDataSchema(segOwner, segName, sqlRedo,operation, sessionInfo);
-          records.add(new SourceRecord(sourcePartition(), sourceOffset(scn,commitScn,rowId), topic,  dataSchemaStruct.getDmlRowSchema(), setValueV2(row,dataSchemaStruct)));                          
+          SourceRecord newRecord = new SourceRecord(sourcePartition(), sourceOffset(scn, commitScn, rowId), topic, dataSchemaStruct.getDmlRowSchema(), setValueV2(row, dataSchemaStruct));
+          //records.add(newRecord);
+          addTxElement(xid, newRecord);
           return records;
         }
       }else{
@@ -297,7 +319,9 @@ public class OracleSourceTask extends SourceTask {
       log.error("SQL parser error during poll ", e);
     }
     catch(Exception e){
-      log.error("Error during poll on topic {} SQL :{}", topic, sqlX, e);
+      if (log.isDebugEnabled()) {
+        log.debug("Error during poll on topic {} SQL :{}", topic, sqlX, e);
+      }
     }
     return null;
     
@@ -326,24 +350,28 @@ public class OracleSourceTask extends SourceTask {
     log.info("Reboot called for logminer");
     try {
       log.info("Logminer session cancel");
-      if (!logMinerSelect.isClosed()) {
-        logMinerSelect.cancel();
-      }
-      OracleSqlUtils.executeCallableStmt(dbConn, OracleConnectorSQL.STOP_LOGMINER_CMD);
-      if (dbConn!=null){
-        log.info("Closing database connection.Last SCN : {}",streamOffsetScn);
+      if (dbConn != null && !dbConn.isClosed()) {
         if (!logMinerSelect.isClosed()) {
-          logMinerSelect.close();
+          logMinerSelect.cancel();
         }
-        if (!logMinerStartStmt.isClosed()) {
-          logMinerStartStmt.close();
+        if (dbConn != null && !dbConn.isClosed()) {
+          OracleSqlUtils.executeCallableStmt(dbConn, OracleConnectorSQL.STOP_LOGMINER_CMD);
+          log.info("Closing database connection.Last SCN : {}", streamOffsetScn);
+          if (!logMinerSelect.isClosed()) {
+            logMinerSelect.close();
+          }
+          if (!logMinerStartStmt.isClosed()) {
+            logMinerStartStmt.close();
+          }
+          if (!dbConn.isClosed()) {
+            dbConn.close();
+          }
         }
-        if (!dbConn.isClosed()) {
-          dbConn.close();
-        }
-        restart(resetOffset);
       }
-    } catch (SQLException e) {log.error(e.getMessage());}
+      restart(resetOffset);
+    } catch (SQLException e) {
+      log.error(e.getMessage(), e);
+    }
   }
 
   public void restart(boolean resetOffset) {
@@ -425,5 +453,30 @@ public class OracleSourceTask extends SourceTask {
 		  }
 		  log.debug(b.toString());
 	  }
+  }
+
+  private Map<String, List<SourceRecord>> txBasedList = new ConcurrentHashMap<>();
+
+  private void addTxElement(String xid, SourceRecord record) {
+
+    log.debug("Add {}: {}", xid, record);
+    List<SourceRecord> recordList = txBasedList.get(xid);
+    if (recordList == null) {
+      recordList = new ArrayList<>();
+      txBasedList.put(xid, recordList);
+    }
+    recordList.add(record);
+    int size = txBasedList.keySet().size();
+    if (size%50 == 1 && size > 2) {
+      log.info("tx map size: " + size);
+    }
+  }
+
+  private List<SourceRecord> getTxElements(String xid) {
+    return txBasedList.getOrDefault(xid, new ArrayList<SourceRecord>());
+  }
+
+  private void deleteTx(String xid) {
+    txBasedList.remove(xid);
   }
 }
